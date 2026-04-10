@@ -1,9 +1,10 @@
 use rsmpeg::{
     avcodec::{AVCodecContext, AVPacket},
     avformat::AVFormatContextInput,
-    ffi::AVMEDIA_TYPE_VIDEO,
+    avutil::AVFrame,
+    ffi::{AVMEDIA_TYPE_VIDEO, AV_PIX_FMT_RGB24, SWS_BILINEAR},
+    swscale::SwsContext,
 };
-use std::collections::VecDeque;
 use std::ffi::CString;
 
 type ErrorMessage = &'static str;
@@ -12,7 +13,6 @@ const ERR_FAILED_TO_FIND_VIDEO: ErrorMessage = "Failed to find video stream";
 const ERR_FAILED_TO_OPEN_DECODER: ErrorMessage = "Failed to open decoder";
 const ERR_READING_FILE: ErrorMessage = "Error reading file";
 
-pub type PacketBuffer = VecDeque<AVPacket>;
 pub type Packet = AVPacket;
 
 pub struct VideoCapture {
@@ -35,18 +35,29 @@ impl VideoCapture {
             if packet.stream_index != self.video_index {
                 continue;
             }
-            return Ok(Some(AVPacket::from(packet)));
+            return Ok(Some(packet));
         }
     }
 }
 
 pub struct VideoDecoder {
     decoder: AVCodecContext,
+    scaler: SwsContext,
+    rgb_frame: AVFrame,
 }
 
 impl VideoDecoder {
-    pub fn new(decoder: AVCodecContext) -> Self {
-        VideoDecoder { decoder }
+    pub fn new(decoder: AVCodecContext, scaler: SwsContext) -> Self {
+        let mut rgb_frame = AVFrame::new();
+        rgb_frame.set_width(decoder.width);
+        rgb_frame.set_height(decoder.height);
+        rgb_frame.set_format(AV_PIX_FMT_RGB24);
+        rgb_frame.get_buffer(1).unwrap();
+        VideoDecoder {
+            decoder,
+            scaler,
+            rgb_frame,
+        }
     }
 
     pub fn width(&self) -> usize {
@@ -63,54 +74,17 @@ impl VideoDecoder {
             .expect("Should be ok");
         let mut res = Vec::new();
         while let Ok(frame) = self.decoder.receive_frame() {
-            let mut buffer = vec![0u8; frame.image_get_buffer_size(1).unwrap()];
-            frame
+            self.scaler
+                .scale_frame(&frame, 0, frame.height, &mut self.rgb_frame)
+                .unwrap();
+
+            let mut buffer = vec![0u8; self.rgb_frame.image_get_buffer_size(1).unwrap()];
+            self.rgb_frame
                 .image_copy_to_buffer(&mut buffer, 1)
                 .expect("Should be ok");
-            res.push(VideoDecoder::yuv_to_rgb(
-                &buffer,
-                frame.width as usize,
-                frame.height as usize,
-            ))
+            res.push(buffer)
         }
         res
-    }
-
-    fn yuv_to_rgb(frame: &[u8], width: usize, height: usize) -> Vec<u8> {
-        let y_size = width * height;
-        let u_size = (width / 2) * (height / 2);
-        let v_size = (width / 2) * (height / 2);
-
-        let y_plane = &frame[0..y_size];
-        let u_plane = &frame[y_size..y_size + u_size];
-        let v_plane = &frame[y_size + u_size..y_size + u_size + v_size];
-
-        let mut rgb = Vec::with_capacity(width * height * 3);
-
-        for y in 0..height {
-            for x in 0..width {
-                let y_idx = y * width + x;
-                let uv_idx = (y / 2) * (width / 2) + (x / 2);
-
-                let y_val = y_plane[y_idx] as i32;
-                let u_val = u_plane[uv_idx] as i32;
-                let v_val = v_plane[uv_idx] as i32;
-
-                let c = y_val - 16;
-                let d = u_val - 128;
-                let e = v_val - 128;
-
-                let r = ((298 * c + 409 * e + 128) >> 8).clamp(0, 255) as u8;
-                let g = ((298 * c - 100 * d - 208 * e + 128) >> 8).clamp(0, 255) as u8;
-                let b = ((298 * c + 516 * d + 128) >> 8).clamp(0, 255) as u8;
-
-                rgb.push(r);
-                rgb.push(g);
-                rgb.push(b);
-            }
-        }
-
-        rgb
     }
 }
 
@@ -138,9 +112,26 @@ pub fn connect(path: &str) -> Result<(VideoCapture, VideoDecoder), ErrorMessage>
         }
     })
     .and_then(|(input, index, decoder)| {
-        Ok((
+        match SwsContext::get_context(
+            decoder.width,
+            decoder.height,
+            decoder.pix_fmt,
+            decoder.width,
+            decoder.height,
+            AV_PIX_FMT_RGB24,
+            SWS_BILINEAR,
+            None,
+            None,
+            None,
+        ) {
+            Some(sws) => Ok((input, index, decoder, sws)),
+            None => Err(ERR_FAILED_TO_OPEN_DECODER),
+        }
+    })
+    .map(|(input, index, decoder, sws)| {
+        (
             VideoCapture::new(input, index as i32),
-            VideoDecoder::new(decoder),
-        ))
+            VideoDecoder::new(decoder, sws),
+        )
     })
 }

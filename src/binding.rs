@@ -1,15 +1,21 @@
-use std::sync::{Arc, Mutex};
+use std::collections::VecDeque;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
 use std::thread;
 
-use crate::core::{connect, Packet, PacketBuffer, VideoDecoder};
+use crate::core::{connect, Packet, VideoDecoder};
 use pyo3::exceptions::PyException;
 use pyo3::prelude::*;
+
+type PacketBuffer = VecDeque<Packet>;
 
 #[pyclass]
 struct RsVideoCapture {
     buffer: Arc<Mutex<PacketBuffer>>,
     decoder: Mutex<VideoDecoder>,
-    closed: Arc<Mutex<bool>>,
+    closed: Arc<AtomicBool>,
 }
 
 #[pymethods]
@@ -21,7 +27,7 @@ impl RsVideoCapture {
             Err(e) => return Err(PyException::new_err(e)),
         };
         let buffer = Arc::new(Mutex::new(PacketBuffer::new()));
-        let closed = Arc::new(Mutex::new(false));
+        let closed = Arc::new(AtomicBool::new(false));
         let instance = RsVideoCapture {
             buffer: buffer.clone(),
             decoder: Mutex::new(decoder),
@@ -29,14 +35,14 @@ impl RsVideoCapture {
         };
 
         thread::spawn(move || {
-            while !*closed.lock().unwrap() {
+            while !closed.load(Ordering::Relaxed) {
                 let packet = match capture.receive() {
                     Ok(Some(packet)) => packet,
                     _ => break,
                 };
                 let mut buffer = buffer.lock().unwrap();
                 if packet.flags == 1 {
-                    *buffer = PacketBuffer::new();
+                    buffer.clear();
                 }
                 buffer.push_back(packet);
             }
@@ -47,23 +53,16 @@ impl RsVideoCapture {
 
     pub fn grab(&mut self) -> PyResult<Vec<u8>> {
         let mut decoder = self.decoder.lock().unwrap();
-        let frames = {
-            let mut buffer = self.buffer.lock().unwrap();
-            (0..buffer.len())
-                .map(|_| buffer.pop_front().unwrap())
-                .collect::<Vec<Packet>>()
-        }
-        .into_iter()
-        .map(|packet| decoder.decode(&packet))
-        .flatten();
-        return match frames.last() {
+        let mut buffer = self.buffer.lock().unwrap();
+        let frames = buffer.drain(..).flat_map(|packet| decoder.decode(&packet));
+        match frames.last() {
             Some(frame) => Ok(frame),
             None => Err(PyException::new_err("No frame received")),
-        };
+        }
     }
 
     pub fn close(&mut self) {
-        *(self.closed.lock().unwrap()) = true;
+        self.closed.store(true, Ordering::Relaxed);
     }
 
     pub fn width(&self) -> usize {
