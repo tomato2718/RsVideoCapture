@@ -15,6 +15,8 @@ type PacketBuffer = VecDeque<Packet>;
 struct RsVideoCapture {
     buffer: Arc<Mutex<PacketBuffer>>,
     decoder: Mutex<VideoDecoder>,
+    width: u32,
+    height: u32,
     closed: Arc<AtomicBool>,
 }
 
@@ -30,6 +32,8 @@ impl RsVideoCapture {
         let closed = Arc::new(AtomicBool::new(false));
         let instance = RsVideoCapture {
             buffer: buffer.clone(),
+            width: decoder.width() as u32,
+            height: decoder.height() as u32,
             decoder: Mutex::new(decoder),
             closed: closed.clone(),
         };
@@ -65,12 +69,12 @@ impl RsVideoCapture {
         self.closed.store(true, Ordering::Relaxed);
     }
 
-    pub fn width(&self) -> usize {
-        self.decoder.lock().unwrap().width()
+    pub fn width(&self) -> u32 {
+        self.width
     }
 
-    pub fn height(&self) -> usize {
-        self.decoder.lock().unwrap().height()
+    pub fn height(&self) -> u32 {
+        self.height
     }
 }
 
