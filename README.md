@@ -5,13 +5,13 @@ An experimental Python library for capturing frames from video streams, written 
 ## Requirements
 
 - Python ≥ 3.8
-- FFmpeg development libraries (`libavcodec`, `libavformat`, `libavutil`, `libswscale`) and `pkg-config`
+- FFmpeg development libraries and `pkg-config`
 
 ## API
 
 ```python
 class RsVideoCapture:
-    def __init__(self, path: str) -> None: ...
+    def __init__(self, path: str, *, use_hardware: bool) -> None: ...
     def grab(self) -> bytes: ...
     def width(self) -> int: ...
     def height(self) -> int: ...
@@ -30,7 +30,7 @@ from video_capture import RsVideoCapture
 
 PATH = "rtsp://192.168.123.123:1234/"
 
-capture = RsVideoCapture(PATH)
+capture = RsVideoCapture(PATH, use_hardware=False)
 width, height = capture.width(), capture.height()
 
 for i in range(20):

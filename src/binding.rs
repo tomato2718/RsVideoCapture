@@ -5,7 +5,7 @@ use std::sync::{
 };
 use std::thread;
 
-use crate::core::{connect, Packet, VideoDecoder};
+use crate::{connect, decoder::VideoDecoder, types::Packet};
 use pyo3::exceptions::PyException;
 use pyo3::prelude::*;
 
@@ -23,8 +23,9 @@ struct RsVideoCapture {
 #[pymethods]
 impl RsVideoCapture {
     #[new]
-    pub fn new(path: String) -> PyResult<Self> {
-        let (mut capture, decoder) = match connect(&path) {
+    #[pyo3(signature = (path, /, *, use_hardware))]
+    pub fn new(path: String, use_hardware: bool) -> PyResult<Self> {
+        let (mut capture, decoder) = match connect(&path, use_hardware) {
             Ok(res) => res,
             Err(e) => return Err(PyException::new_err(e)),
         };
