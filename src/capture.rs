@@ -1,6 +1,7 @@
 use rsmpeg::{
     avcodec::{AVCodecParametersRef, AVCodecRef},
     avformat::AVFormatContextInput,
+    avutil::AVDictionary,
     ffi::AVMEDIA_TYPE_VIDEO,
 };
 use std::ffi::CString;
@@ -31,7 +32,11 @@ impl VideoCapture {
     }
 
     fn create_input(cpath: CString) -> Result<AVFormatContextInput, VideoCaptureError> {
-        AVFormatContextInput::open(cpath.as_ref()).map_err(|_| ERR_OPEN_FILE)
+        AVFormatContextInput::builder()
+            .url(cpath.as_ref())
+            .options(&mut Some(AVDictionary::new(c"rtsp_transport", c"tcp", 0)))
+            .open()
+            .map_err(|_| ERR_OPEN_FILE)
     }
 
     pub fn receive(&mut self) -> Result<Option<Packet>, VideoCaptureError> {
