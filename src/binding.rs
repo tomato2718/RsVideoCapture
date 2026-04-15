@@ -6,7 +6,7 @@ use std::sync::{
 use std::thread;
 
 use crate::{connect, decoder::VideoDecoder, types::Packet};
-use pyo3::exceptions::PyException;
+use pyo3::exceptions::PyConnectionError;
 use pyo3::prelude::*;
 
 type PacketBuffer = VecDeque<Packet>;
@@ -27,7 +27,7 @@ impl RsVideoCapture {
     pub fn new(path: String, timeout: u32, use_hardware: bool) -> PyResult<Self> {
         let (mut capture, decoder) = match connect(&path, timeout, use_hardware) {
             Ok(res) => res,
-            Err(e) => return Err(PyException::new_err(e)),
+            Err(e) => return Err(PyConnectionError::new_err(e)),
         };
         let buffer = Arc::new(Mutex::new(PacketBuffer::new()));
         let is_closed = Arc::new(AtomicBool::new(false));
@@ -57,9 +57,9 @@ impl RsVideoCapture {
         Ok(instance)
     }
 
-    pub fn grab(&mut self) -> PyResult<Vec<u8>> {
+    pub fn grab(&mut self) -> PyResult<Option<Vec<u8>>> {
         if self.is_closed.load(Ordering::Relaxed) {
-            return Err(PyException::new_err("Connection is closed"));
+            return Err(PyConnectionError::new_err("Connection is closed"));
         }
         let mut decoder = self.decoder.lock().unwrap();
         let packets: Vec<Packet> = {
@@ -69,10 +69,7 @@ impl RsVideoCapture {
         let frames = packets
             .into_iter()
             .flat_map(|packet| decoder.decode(&packet));
-        match frames.last() {
-            Some(frame) => Ok(frame),
-            None => Err(PyException::new_err("No frame received")),
-        }
+        Ok(frames.last())
     }
 
     pub fn close(&mut self) {
