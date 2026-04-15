@@ -58,8 +58,13 @@ impl RsVideoCapture {
 
     pub fn grab(&mut self) -> PyResult<Vec<u8>> {
         let mut decoder = self.decoder.lock().unwrap();
-        let mut buffer = self.buffer.lock().unwrap();
-        let frames = buffer.drain(..).flat_map(|packet| decoder.decode(&packet));
+        let packets: Vec<Packet> = {
+            let mut buffer = self.buffer.lock().unwrap();
+            buffer.drain(..).collect()
+        };
+        let frames = packets
+            .into_iter()
+            .flat_map(|packet| decoder.decode(&packet));
         match frames.last() {
             Some(frame) => Ok(frame),
             None => Err(PyException::new_err("No frame received")),
