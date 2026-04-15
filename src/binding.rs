@@ -17,7 +17,7 @@ struct RsVideoCapture {
     decoder: Mutex<VideoDecoder>,
     width: u32,
     height: u32,
-    closed: Arc<AtomicBool>,
+    is_closed: Arc<AtomicBool>,
 }
 
 #[pymethods]
@@ -30,17 +30,17 @@ impl RsVideoCapture {
             Err(e) => return Err(PyException::new_err(e)),
         };
         let buffer = Arc::new(Mutex::new(PacketBuffer::new()));
-        let closed = Arc::new(AtomicBool::new(false));
+        let is_closed = Arc::new(AtomicBool::new(false));
         let instance = RsVideoCapture {
             buffer: buffer.clone(),
             width: decoder.width() as u32,
             height: decoder.height() as u32,
             decoder: Mutex::new(decoder),
-            closed: closed.clone(),
+            is_closed: is_closed.clone(),
         };
 
         thread::spawn(move || {
-            while !closed.load(Ordering::Relaxed) {
+            while !is_closed.load(Ordering::Relaxed) {
                 let packet = match capture.receive() {
                     Ok(Some(packet)) => packet,
                     _ => break,
@@ -51,12 +51,16 @@ impl RsVideoCapture {
                 }
                 buffer.push_back(packet);
             }
+            is_closed.store(true, Ordering::Relaxed);
         });
 
         Ok(instance)
     }
 
     pub fn grab(&mut self) -> PyResult<Vec<u8>> {
+        if self.is_closed.load(Ordering::Relaxed) {
+            return Err(PyException::new_err("Connection is closed"));
+        }
         let mut decoder = self.decoder.lock().unwrap();
         let packets: Vec<Packet> = {
             let mut buffer = self.buffer.lock().unwrap();
@@ -72,7 +76,7 @@ impl RsVideoCapture {
     }
 
     pub fn close(&mut self) {
-        self.closed.store(true, Ordering::Relaxed);
+        self.is_closed.store(true, Ordering::Relaxed);
     }
 
     pub fn width(&self) -> u32 {
