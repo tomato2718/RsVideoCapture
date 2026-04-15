@@ -23,9 +23,9 @@ struct RsVideoCapture {
 #[pymethods]
 impl RsVideoCapture {
     #[new]
-    #[pyo3(signature = (path, /, *, use_hardware))]
-    pub fn new(path: String, use_hardware: bool) -> PyResult<Self> {
-        let (mut capture, decoder) = match connect(&path, use_hardware) {
+    #[pyo3(signature = (path, /, *, timeout=10000, use_hardware=false))]
+    pub fn new(path: String, timeout: u32, use_hardware: bool) -> PyResult<Self> {
+        let (mut capture, decoder) = match connect(&path, timeout, use_hardware) {
             Ok(res) => res,
             Err(e) => return Err(PyException::new_err(e)),
         };
