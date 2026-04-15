@@ -11,8 +11,8 @@ An experimental Python library for capturing frames from video streams, written 
 
 ```python
 class RsVideoCapture:
-    def __init__(self, path: str, *, use_hardware: bool) -> None: ...
-    def grab(self) -> bytes: ...
+    def __init__(self, path: str, *, timeout: int = 10000, use_hardware: bool = False) -> None: ...
+    def grab(self) -> bytes | None: ...
     def width(self) -> int: ...
     def height(self) -> int: ...
     def close(self) -> None: ...
@@ -34,16 +34,14 @@ capture = RsVideoCapture(PATH, use_hardware=False)
 width, height = capture.width(), capture.height()
 
 for i in range(20):
-    try:
-        frame = capture.grab()
+    frame = capture.grab()
+    if frame is not None:
         Image.frombytes(mode="RGB", size=(width, height), data=frame).save(
             f"frame_{i:03d}.png", format="PNG"
         )
-    except Exception as e:
-        print(e)
     sleep(1)
 
 capture.close()
 ```
 
-`grab()` returns a `bytes` object containing the raw RGB24 pixel data for the latest frame (size `width * height * 3`). Pass it to PIL, NumPy, OpenCV, or any library that can consume raw RGB buffers.
+`grab()` returns a `bytes` object containing the raw RGB24 pixel data for the latest frame (size `width * height * 3`), or `None` if no frame is available yet. Pass it to PIL, NumPy, OpenCV, or any library that can consume raw RGB buffers. Raises `ConnectionError` if the connection is closed.
