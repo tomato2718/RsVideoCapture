@@ -11,12 +11,28 @@ An experimental Python library for capturing frames from video streams, written 
 
 ```python
 class RsVideoCapture:
-    def __init__(self, path: str, *, timeout: int = 10000, use_hardware: bool = False) -> None: ...
-    def grab(self) -> bytes | None: ...
+    def __init__(
+        self,
+        path: str,
+        *,
+        timeout: int = 10000,
+        hardware_acceleration: HardwareType | None = None,
+    ) -> None: ...
+    def grab(self) -> Option[bytes]: ...
     def width(self) -> int: ...
     def height(self) -> int: ...
     def close(self) -> None: ...
+
+class HardwareType(Enum):
+    VAAPI = 0        # Linux (Intel/AMD)
+    VideoToolbox = 1 # macOS
+    D3D11VA = 2      # Windows
+    D3D12VA = 3      # Windows
+    CUDA = 4         # Linux/Windows (NVIDIA)
+    Vulkan = 5       # Linux/Windows
 ```
+
+Pass `hardware_acceleration=None` (the default) to use the software decoder. Selecting a `HardwareType` not supported on the current OS raises `ValueError`.
 
 ## Example
 
@@ -26,11 +42,11 @@ Capture one frame per second from an RTSP stream and save each as a PNG:
 from time import sleep
 
 from PIL import Image
-from video_capture import RsVideoCapture
+from video_capture import RsVideoCapture, HardwareType
 
 PATH = "rtsp://192.168.123.123:1234/"
 
-capture = RsVideoCapture(PATH, use_hardware=False)
+capture = RsVideoCapture(PATH, hardware_acceleration=HardwareType.VAAPI)
 width, height = capture.width(), capture.height()
 
 for i in range(20):
@@ -45,3 +61,15 @@ capture.close()
 ```
 
 `grab()` returns a `bytes` object containing the raw RGB24 pixel data for the latest frame (size `width * height * 3`), or `None` if no frame is available yet. Pass it to PIL, NumPy, OpenCV, or any library that can consume raw RGB buffers. Raises `ConnectionError` if the connection is closed.
+
+## Exceptions
+
+`RsVideoCapture(...)` may raise:
+
+- `ConnectionError` — failed to open the video source, or no video stream found in source
+- `IOError` — failure while reading from the source
+- `ValueError` — failed to open the decoder, no matching hardware config for the codec, or selected `HardwareType` not supported on this platform
+
+`grab()` may raise:
+
+- `ConnectionError` — the connection has been closed

@@ -5,12 +5,8 @@ use rsmpeg::{
     swscale::SwsContext,
 };
 
-use crate::types::{Packet, VideoCaptureError};
-
-const ERR_FAILED_TO_OPEN_DECODER: VideoCaptureError = "Failed to open hardware decoder";
-const ERR_NO_HW_CONFIG: VideoCaptureError = "No suitable hardware config found for codec";
-const ERR_FAILED_TO_CREATE_HW_DEVICE: VideoCaptureError =
-    "Failed to create hardware device context";
+use super::DecoderError;
+use crate::types::Packet;
 
 pub struct HardwareDecoder {
     decoder: AVCodecContext,
@@ -24,10 +20,10 @@ impl HardwareDecoder {
         codec: AVCodecRef,
         codecpar: AVCodecParametersRef,
         device_type: AVHWDeviceType,
-    ) -> Result<Self, VideoCaptureError> {
+    ) -> Result<Self, DecoderError> {
         Self::find_hw_config(&codec, device_type)?;
         let hw_device_ctx = AVHWDeviceContext::create(device_type, None, None, 0)
-            .map_err(|_| ERR_FAILED_TO_CREATE_HW_DEVICE)?;
+            .map_err(|_| DecoderError::FailedToOpenDecoder)?;
         let decoder = Self::create_decoder(codec, codecpar, hw_device_ctx)?;
         let frame_buffer = Self::create_frame_buffer(&decoder);
         let buffer_size = (3 * decoder.width * decoder.height) as usize;
@@ -40,10 +36,7 @@ impl HardwareDecoder {
         })
     }
 
-    fn find_hw_config(
-        codec: &AVCodecRef,
-        device_type: AVHWDeviceType,
-    ) -> Result<(), VideoCaptureError> {
+    fn find_hw_config(codec: &AVCodecRef, device_type: AVHWDeviceType) -> Result<(), DecoderError> {
         (0..)
             .map_while(|i| codec.hw_config(i))
             .any(|config| {
@@ -51,20 +44,20 @@ impl HardwareDecoder {
                     && (config.methods as u32 & AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX) != 0
             })
             .then_some(())
-            .ok_or(ERR_NO_HW_CONFIG)
+            .ok_or(DecoderError::NoHwConfig)
     }
 
     fn create_decoder(
         codec: AVCodecRef,
         codecpar: AVCodecParametersRef,
         hw_device_ctx: AVHWDeviceContext,
-    ) -> Result<AVCodecContext, VideoCaptureError> {
+    ) -> Result<AVCodecContext, DecoderError> {
         let mut decoder = AVCodecContext::new(&codec);
         decoder.apply_codecpar(&codecpar).unwrap();
         decoder.set_hw_device_ctx(hw_device_ctx);
         match decoder.open(None) {
             Ok(_) => Ok(decoder),
-            Err(_) => Err(ERR_FAILED_TO_OPEN_DECODER),
+            Err(_) => Err(DecoderError::FailedToOpenDecoder),
         }
     }
 

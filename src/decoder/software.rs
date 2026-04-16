@@ -5,9 +5,8 @@ use rsmpeg::{
     swscale::SwsContext,
 };
 
-use crate::types::{Packet, VideoCaptureError};
-
-const ERR_FAILED_TO_OPEN_DECODER: VideoCaptureError = "Failed to open decoder";
+use super::DecoderError;
+use crate::types::Packet;
 
 pub struct SoftwareDecoder {
     decoder: AVCodecContext,
@@ -17,10 +16,7 @@ pub struct SoftwareDecoder {
 }
 
 impl SoftwareDecoder {
-    pub fn new(
-        codec: AVCodecRef,
-        codecpar: AVCodecParametersRef,
-    ) -> Result<Self, VideoCaptureError> {
+    pub fn new(codec: AVCodecRef, codecpar: AVCodecParametersRef) -> Result<Self, DecoderError> {
         let decoder = Self::create_decoder(codec, codecpar)?;
         let scaler = Self::create_scaler(&decoder)?;
         let frame_buffer = Self::create_frame_buffer(&decoder);
@@ -36,16 +32,16 @@ impl SoftwareDecoder {
     fn create_decoder(
         codec: AVCodecRef,
         codecpar: AVCodecParametersRef,
-    ) -> Result<AVCodecContext, VideoCaptureError> {
+    ) -> Result<AVCodecContext, DecoderError> {
         let mut decoder = AVCodecContext::new(&codec);
         decoder.apply_codecpar(&codecpar).unwrap();
         match decoder.open(None) {
             Ok(_) => Ok(decoder),
-            Err(_) => Err(ERR_FAILED_TO_OPEN_DECODER),
+            Err(_) => Err(DecoderError::FailedToOpenDecoder),
         }
     }
 
-    fn create_scaler(decoder: &AVCodecContext) -> Result<SwsContext, VideoCaptureError> {
+    fn create_scaler(decoder: &AVCodecContext) -> Result<SwsContext, DecoderError> {
         match SwsContext::get_context(
             decoder.width,
             decoder.height,
@@ -59,7 +55,7 @@ impl SoftwareDecoder {
             None,
         ) {
             Some(sws) => Ok(sws),
-            None => Err(ERR_FAILED_TO_OPEN_DECODER),
+            None => Err(DecoderError::FailedToOpenDecoder),
         }
     }
 

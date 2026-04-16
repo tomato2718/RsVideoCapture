@@ -5,8 +5,12 @@ use std::sync::{
 };
 use std::thread;
 
-use crate::{connect, decoder::VideoDecoder, types::Packet};
-use pyo3::exceptions::PyConnectionError;
+use crate::{
+    capture::{VideoCapture, VideoCaptureError},
+    decoder::{DecoderError, HardwareAcceleration, VideoDecoder},
+    types::Packet,
+};
+use pyo3::exceptions::{PyConnectionError, PyIOError, PyValueError};
 use pyo3::prelude::*;
 
 type PacketBuffer = VecDeque<Packet>;
@@ -20,15 +24,57 @@ struct RsVideoCapture {
     is_closed: Arc<AtomicBool>,
 }
 
+impl RsVideoCapture {
+    fn connect(
+        path: &str,
+        timeout: u32,
+        hardware_acceleration: HardwareAcceleration,
+    ) -> Result<(VideoCapture, VideoDecoder), PyErr> {
+        let (capture, codec) = VideoCapture::new(path, timeout).map_err(|err| match err {
+            VideoCaptureError::FailedToOpenFile => {
+                PyConnectionError::new_err(format!("Failed to open video source: {}", path))
+            }
+            VideoCaptureError::FailedToFindVideo => {
+                PyConnectionError::new_err("No video stream found in source")
+            }
+            VideoCaptureError::ErrReadingFile => {
+                PyIOError::new_err("Error reading from video source")
+            }
+        })?;
+        let decoder =
+            VideoDecoder::new(codec, capture.codecpar(), hardware_acceleration).map_err(|err| {
+                match err {
+                    DecoderError::UnsupportedPlatform => PyValueError::new_err(
+                        "Selected hardware acceleration is not supported on this platform",
+                    ),
+                    DecoderError::FailedToOpenDecoder => {
+                        PyValueError::new_err("Failed to open decoder")
+                    }
+                    DecoderError::NoHwConfig => {
+                        PyValueError::new_err("No hardware decoder config found for codec")
+                    }
+                }
+            })?;
+        Ok((capture, decoder))
+    }
+}
+
 #[pymethods]
 impl RsVideoCapture {
     #[new]
-    #[pyo3(signature = (path, /, *, timeout=10000, use_hardware=false))]
-    pub fn new(path: String, timeout: u32, use_hardware: bool) -> PyResult<Self> {
-        let (mut capture, decoder) = match connect(&path, timeout, use_hardware) {
-            Ok(res) => res,
-            Err(e) => return Err(PyConnectionError::new_err(e)),
-        };
+    #[pyo3(signature = (path, /, *, timeout=10000, hardware_acceleration=None))]
+    pub fn new(
+        path: String,
+        timeout: u32,
+        hardware_acceleration: Option<HardwareType>,
+    ) -> PyResult<Self> {
+        let (mut capture, decoder) = Self::connect(
+            &path,
+            timeout,
+            hardware_acceleration
+                .map(|hw| hw.into())
+                .unwrap_or(HardwareAcceleration::None),
+        )?;
         let buffer = Arc::new(Mutex::new(PacketBuffer::new()));
         let is_closed = Arc::new(AtomicBool::new(false));
         let instance = RsVideoCapture {
@@ -85,8 +131,34 @@ impl RsVideoCapture {
     }
 }
 
+#[pyclass(eq, eq_int)]
+#[derive(PartialEq, Clone, Copy)]
+#[allow(clippy::upper_case_acronyms)]
+pub enum HardwareType {
+    VAAPI,
+    VideoToolbox,
+    D3D11VA,
+    D3D12VA,
+    CUDA,
+    Vulkan,
+}
+
+impl From<HardwareType> for HardwareAcceleration {
+    fn from(value: HardwareType) -> Self {
+        match value {
+            HardwareType::VAAPI => HardwareAcceleration::VAAPI,
+            HardwareType::VideoToolbox => HardwareAcceleration::VideoToolbox,
+            HardwareType::D3D11VA => HardwareAcceleration::D3D11VA,
+            HardwareType::D3D12VA => HardwareAcceleration::D3D12VA,
+            HardwareType::CUDA => HardwareAcceleration::CUDA,
+            HardwareType::Vulkan => HardwareAcceleration::Vulkan,
+        }
+    }
+}
+
 #[pymodule]
 fn video_capture(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<RsVideoCapture>()?;
+    m.add_class::<HardwareType>()?;
     Ok(())
 }
