@@ -1,4 +1,4 @@
-use crate::types::Packet;
+use crate::packet::Packet;
 use rsmpeg::{
     avcodec::{AVCodecParametersRef, AVCodecRef},
     avformat::AVFormatContextInput,

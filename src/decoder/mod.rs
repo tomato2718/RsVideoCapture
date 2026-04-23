@@ -1,6 +1,6 @@
 mod hardware;
 mod software;
-use crate::types::Packet;
+use crate::packet::Packet;
 use rsmpeg::avcodec::{AVCodecParametersRef, AVCodecRef};
 use rsmpeg::ffi;
 

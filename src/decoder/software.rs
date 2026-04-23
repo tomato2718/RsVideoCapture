@@ -6,7 +6,7 @@ use rsmpeg::{
 };
 
 use super::DecoderError;
-use crate::types::Packet;
+use crate::packet::Packet;
 
 pub struct SoftwareDecoder {
     decoder: AVCodecContext,
