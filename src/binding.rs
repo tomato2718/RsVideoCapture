@@ -1,14 +1,15 @@
 use std::collections::VecDeque;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc, Mutex,
+    mpsc, Arc, Mutex,
 };
 use std::thread;
 
 use crate::{
     capture::{VideoCapture, VideoCaptureError},
     decoder::{DecoderError, HardwareAcceleration, VideoDecoder},
-    types::Packet,
+    packet::{clone_packet, Packet},
+    writer::VideoWriter,
 };
 use pyo3::exceptions::{PyConnectionError, PyIOError, PyValueError};
 use pyo3::prelude::*;
@@ -22,6 +23,7 @@ struct RsVideoCapture {
     width: u32,
     height: u32,
     is_closed: Arc<AtomicBool>,
+    daemon_threads: Vec<thread::JoinHandle<()>>,
 }
 
 impl RsVideoCapture {
@@ -57,48 +59,105 @@ impl RsVideoCapture {
             })?;
         Ok((capture, decoder))
     }
+
+    fn setup_capture_thread(
+        &mut self,
+        mut capture: VideoCapture,
+        writer: Option<mpsc::Sender<Packet>>,
+    ) {
+        let is_closed = self.is_closed.clone();
+        let buffer = self.buffer.clone();
+        let mut tasks: Vec<Box<dyn Fn(Packet) + Send>> = vec![];
+        tasks.push(Box::new(move |packet| {
+            let mut buffer = buffer.lock().unwrap();
+            if packet.flags == 1 {
+                buffer.clear();
+            }
+            buffer.push_back(packet);
+        }));
+        if let Some(writer) = writer {
+            let is_closed = self.is_closed.clone();
+            tasks.push(Box::new(move |packet| {
+                if writer.send(packet).is_err() {
+                    is_closed.store(true, Ordering::Relaxed);
+                }
+            }))
+        }
+        let handler = thread::spawn(move || {
+            while let Ok(Some(packet)) = capture.receive() {
+                if packet.flags == 1 {
+                    for task in tasks.iter() {
+                        task(clone_packet(&packet));
+                    }
+                    break;
+                }
+            }
+            while !is_closed.load(Ordering::Relaxed) {
+                let packet = match capture.receive() {
+                    Ok(Some(packet)) => packet,
+                    _ => break,
+                };
+                for task in tasks.iter() {
+                    task(clone_packet(&packet));
+                }
+            }
+            is_closed.store(true, Ordering::Relaxed);
+        });
+        self.daemon_threads.push(handler);
+    }
+
+    fn setup_writer_thread(
+        &mut self,
+        path: String,
+        capture: &VideoCapture,
+    ) -> Result<mpsc::Sender<Packet>, PyErr> {
+        let mut writer = VideoWriter::new(&path, capture.codecpar().clone(), capture.time_base())
+            .map_err(|_| PyIOError::new_err("Failed to open writer"))?;
+        let (tx, rx) = mpsc::channel();
+        let handler = thread::spawn(move || {
+            for packet in rx.iter() {
+                if writer.push(packet).is_err() {
+                    break;
+                };
+            }
+            let _ = writer.end();
+        });
+        self.daemon_threads.push(handler);
+
+        Ok(tx)
+    }
 }
 
 #[pymethods]
 impl RsVideoCapture {
     #[new]
-    #[pyo3(signature = (path, /, *, timeout=10000, hardware_acceleration=None))]
+    #[pyo3(signature = (path, /, *, timeout=10000, hardware_acceleration=None, save_path=None))]
     pub fn new(
         path: String,
         timeout: u32,
         hardware_acceleration: Option<HardwareType>,
+        save_path: Option<String>,
     ) -> PyResult<Self> {
-        let (mut capture, decoder) = Self::connect(
+        let (capture, decoder) = Self::connect(
             &path,
             timeout,
             hardware_acceleration
                 .map(|hw| hw.into())
                 .unwrap_or(HardwareAcceleration::None),
         )?;
-        let buffer = Arc::new(Mutex::new(PacketBuffer::new()));
-        let is_closed = Arc::new(AtomicBool::new(false));
-        let instance = RsVideoCapture {
-            buffer: buffer.clone(),
+        let mut instance = RsVideoCapture {
+            buffer: Arc::new(Mutex::new(PacketBuffer::new())),
             width: decoder.width() as u32,
             height: decoder.height() as u32,
             decoder: Mutex::new(decoder),
-            is_closed: is_closed.clone(),
+            is_closed: Arc::new(AtomicBool::new(false)),
+            daemon_threads: Vec::new(),
         };
 
-        thread::spawn(move || {
-            while !is_closed.load(Ordering::Relaxed) {
-                let packet = match capture.receive() {
-                    Ok(Some(packet)) => packet,
-                    _ => break,
-                };
-                let mut buffer = buffer.lock().unwrap();
-                if packet.flags == 1 {
-                    buffer.clear();
-                }
-                buffer.push_back(packet);
-            }
-            is_closed.store(true, Ordering::Relaxed);
-        });
+        let writer_tx = save_path
+            .map(|path| instance.setup_writer_thread(path, &capture))
+            .transpose()?;
+        instance.setup_capture_thread(capture, writer_tx);
 
         Ok(instance)
     }
@@ -120,6 +179,9 @@ impl RsVideoCapture {
 
     pub fn close(&mut self) {
         self.is_closed.store(true, Ordering::Relaxed);
+        for t in self.daemon_threads.drain(..) {
+            t.join().expect("Couldn't join on the associated thread");
+        }
     }
 
     pub fn width(&self) -> u32 {

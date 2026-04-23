@@ -2,7 +2,7 @@ use crate::packet::Packet;
 use rsmpeg::{
     avcodec::{AVCodecParametersRef, AVCodecRef},
     avformat::AVFormatContextInput,
-    avutil::AVDictionary,
+    avutil::{AVDictionary, AVRational},
     ffi::AVMEDIA_TYPE_VIDEO,
 };
 use std::ffi::CString;
@@ -62,6 +62,10 @@ impl VideoCapture {
 
     pub fn codecpar(&self) -> AVCodecParametersRef<'_> {
         self.input.streams()[self.video_index as usize].codecpar()
+    }
+
+    pub fn time_base(&self) -> AVRational {
+        self.input.streams()[self.video_index as usize].time_base
     }
 }
 
