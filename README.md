@@ -1,5 +1,13 @@
 # video-capture
 
+## IMPORTANT
+
+This repository has been moved to a new location and is no longer actively maintained.
+
+Please use the new repository for the latest code, documentation, and issue tracking: [ez-video-capture](https://github.com/tomato2718/ez-video-capture).
+
+---
+
 An experimental Python library for capturing frames from video streams, written in Rust on top of FFmpeg via [`rsmpeg`](https://github.com/larksuite/rsmpeg) and exposed to Python through [PyO3](https://pyo3.rs/).
 
 ## Requirements
